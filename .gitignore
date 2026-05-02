@@ -1,0 +1,26 @@
+# Gradle
+.gradle
+**/build/
+
+.git
+
+# Nix / direnv
+.direnv/
+
+# Kotlin build cache
+.kotlin/
+
+# Android
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Claude
+CLAUDE.md
+ROADMAP.md
+.claude/
+
+# Local config
+.device
