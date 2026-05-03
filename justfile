@@ -19,6 +19,10 @@ deploy: release
 install:
     ./gradlew installDebug ${AAPT2:+-Pandroid.aapt2FromMavenOverride=$AAPT2}
 
+# Uninstall the app from a connected device
+uninstall:
+    adb -s $(adb-device) uninstall xyz.chambaz.odyssey
+
 # Delete all build outputs
 clean:
     ./gradlew clean

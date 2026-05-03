@@ -21,6 +21,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import xyz.chambaz.odyssey.model.Audiobook
 import xyz.chambaz.odyssey.model.Position
@@ -84,13 +85,23 @@ fun AudiobooksContent(
                         }
                         if (progress != null) {
                             Spacer(Modifier.width(12.dp))
-                            LinearProgressIndicator(
-                                progress = { progress },
-                                modifier = Modifier.weight(0.67f).height(3.dp),
-                                color = Accent,
-                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                drawStopIndicator = {},
-                            )
+                            Column(modifier = Modifier.weight(0.67f)) {
+                                Text(
+                                    "${(progress * 100).toInt()}%",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.End,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                                    color = Accent,
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    drawStopIndicator = {},
+                                )
+                            }
                         }
                     }
                 },
@@ -215,13 +226,21 @@ fun AudiobooksSearchScreen(
                             }
                             if (progress != null) {
                                 Spacer(Modifier.width(12.dp))
-                                LinearProgressIndicator(
-                                    progress = { progress },
-                                    modifier = Modifier.weight(0.67f).height(3.dp),
-                                    color = Accent,
-                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    drawStopIndicator = {},
-                                )
+                                Column(modifier = Modifier.weight(0.67f)) {
+                                    Text(
+                                        "${(progress * 100).toInt()}%",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    LinearProgressIndicator(
+                                        progress = { progress },
+                                        modifier = Modifier.fillMaxWidth().height(3.dp),
+                                        color = Accent,
+                                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                                        drawStopIndicator = {},
+                                    )
+                                }
                             }
                         }
                     },

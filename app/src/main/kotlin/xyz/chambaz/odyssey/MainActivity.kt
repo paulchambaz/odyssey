@@ -345,6 +345,17 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                // Foreground service: keep process alive during background playback
+                LaunchedEffect(playing, playerBook) {
+                    if (playing && playerBook != null) {
+                        val intent = Intent(context, PlaybackService::class.java)
+                            .putExtra("title", playerBook!!.title)
+                        context.startForegroundService(intent)
+                    } else {
+                        context.stopService(Intent(context, PlaybackService::class.java))
+                    }
+                }
+
                 // Play/pause: rewind on resume (if paused long enough), pause + sync on stop
                 LaunchedEffect(playing) {
                     if (playing) {
@@ -580,11 +591,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                LaunchedEffect(playing, screen, playerBook, sliderValue) {
+                LaunchedEffect(playing, playerBook, sliderValue, currentChapter) {
                     val book = playerBook
-                    val onPlayer = screen == Screen.Player || screen == Screen.CarMode
-                    if (book != null && onPlayer) {
-                        mediaSession.isActive = playing
+                    if (book != null && playing) {
+                        mediaSession.isActive = true
                         val currentPositionMs = (sliderValue * chapterDurationMs).toLong()
                         mediaSession.setPlaybackState(
                             PlaybackState.Builder()
@@ -819,6 +829,12 @@ class MainActivity : AppCompatActivity() {
                             extractTarGz(archiveFile, destDir)
                             archiveFile.delete()
                             setDownloadState(book.hash, DownloadState.READY)
+                            try {
+                                val pos = api!!.getPosition(book.hash)
+                                store.savePosition(book.hash, pos)
+                                store.saveServerPosition(book.hash, pos)
+                                positions = positions + (book.hash to pos)
+                            } catch (_: Exception) {}
                             cancelCallbacks.remove(book.hash)
                             notificationManager.notify(notifId, NotificationCompat.Builder(context, NOTIF_CHANNEL_ID)
                                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
