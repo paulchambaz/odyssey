@@ -12,6 +12,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.media.MediaPlayer
+import android.media.PlaybackParams
 import android.media.audiofx.LoudnessEnhancer
 import android.media.MediaMetadata
 import android.media.session.MediaSession
@@ -163,6 +164,7 @@ class MainActivity : AppCompatActivity() {
                 var currentChapter by remember { mutableIntStateOf(0) }
                 var speedRaw by remember { mutableStateOf(store.loadPlaybackSpeed()) }
                 var chapterDurationMs by remember { mutableLongStateOf(0L) }
+                var chapterDurationsMs by remember { mutableStateOf<Map<Int, Long>>(emptyMap()) }
                 var pendingSeekMs by remember { mutableStateOf<Long?>(null) }
                 var timerEndMs by remember { mutableStateOf<Long?>(null) }
                 var originalTimerDurationMs by remember { mutableStateOf<Long?>(null) }
@@ -214,7 +216,15 @@ class MainActivity : AppCompatActivity() {
                     filteredBooks.filter { downloadStates[it.hash] == DownloadState.READY }
                 }
                 var positions by remember { mutableStateOf<Map<String, Position?>>(emptyMap()) }
-                LaunchedEffect(localBooks) { positions = localBooks.associate { it.hash to store.loadPosition(it.hash) } }
+                LaunchedEffect(localBooks, screen) {
+                    positions = localBooks.associate { it.hash to store.loadPosition(it.hash) }
+                    if (screen == Screen.Main) {
+                        while (isActive) {
+                            delay(30_000)
+                            positions = localBooks.associate { it.hash to store.loadPosition(it.hash) }
+                        }
+                    }
+                }
                 var covers by remember { mutableStateOf<Map<String, ImageBitmap?>>(emptyMap()) }
                 var chapterCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
                 var downloadTimestamps by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
@@ -315,7 +325,8 @@ class MainActivity : AppCompatActivity() {
                     mediaPlayer.setDataSource(file.absolutePath)
                     mediaPlayer.prepare()
                     chapterDurationMs = mediaPlayer.duration.toLong().coerceAtLeast(0L)
-                    try { mediaPlayer.playbackParams = mediaPlayer.playbackParams.setSpeed(speedRaw) } catch (_: Exception) {}
+                    chapterDurationsMs = chapterDurationsMs + (currentChapter to chapterDurationMs)
+                    try { mediaPlayer.playbackParams = PlaybackParams().setSpeed(speedRaw).setPitch(1.0f) } catch (_: Exception) {}
 
                     loudnessEnhancer.value?.release()
                     loudnessEnhancer.value = if (volumeNormEnabled) {
@@ -335,9 +346,22 @@ class MainActivity : AppCompatActivity() {
 
                     mediaPlayer.setOnCompletionListener {
                         if (currentChapter < playerChapters.lastIndex) {
-                            scope.launch { syncPosition(book.hash) }
-                            currentChapter++
-                            pendingSeekMs = 0L
+                            if (timerEndMs == -1L) {
+                                timerEndMs = null
+                                scope.launch { syncPosition(book.hash) }
+                                currentChapter++
+                                pendingSeekMs = 0L
+                                playing = false
+                                if (store.loadShakeToExtend()) {
+                                    timerGraceEndMs = System.currentTimeMillis() + 60_000L
+                                } else {
+                                    originalTimerDurationMs = null
+                                }
+                            } else {
+                                scope.launch { syncPosition(book.hash) }
+                                currentChapter++
+                                pendingSeekMs = 0L
+                            }
                         } else {
                             playing = false
                             scope.launch { syncPosition(book.hash) }
@@ -345,9 +369,9 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // Foreground service: keep process alive during background playback
-                LaunchedEffect(playing, playerBook) {
-                    if (playing && playerBook != null) {
+                // Foreground service: keep process alive during background playback and grace window
+                LaunchedEffect(playing, playerBook, timerGraceEndMs) {
+                    if ((playing || timerGraceEndMs != null) && playerBook != null) {
                         val intent = Intent(context, PlaybackService::class.java)
                             .putExtra("title", playerBook!!.title)
                         context.startForegroundService(intent)
@@ -394,7 +418,8 @@ class MainActivity : AppCompatActivity() {
                 LaunchedEffect(speedRaw) {
                     store.savePlaybackSpeed(speedRaw)
                     if (chapterDurationMs > 0) {
-                        try { mediaPlayer.playbackParams = mediaPlayer.playbackParams.setSpeed(speedRaw) } catch (_: Exception) {}
+                        try { mediaPlayer.playbackParams = PlaybackParams().setSpeed(speedRaw).setPitch(1.0f) } catch (_: Exception) {}
+                        if (mediaPlayer.isPlaying && !playing) playing = true
                     }
                 }
 
@@ -417,22 +442,21 @@ class MainActivity : AppCompatActivity() {
                     val remaining = end - System.currentTimeMillis()
                     if (remaining > 0) delay(remaining)
                     timerEndMs = null
+                    if (playing) { playing = false; playerBook?.hash?.let { syncPosition(it) } }
                     if (store.loadShakeToExtend() && originalTimerDurationMs != null) {
                         timerGraceEndMs = System.currentTimeMillis() + 60_000L
                     } else {
                         originalTimerDurationMs = null
-                        if (playing) { playing = false; playerBook?.hash?.let { syncPosition(it) } }
                     }
                 }
 
-                // Grace window: 60s to shake; if no shake, pause
+                // Grace window: 60s to shake; if no shake, stay paused
                 LaunchedEffect(timerGraceEndMs) {
                     val end = timerGraceEndMs ?: return@LaunchedEffect
                     delay((end - System.currentTimeMillis()).coerceAtLeast(0L))
                     if (timerGraceEndMs != null) {
                         timerGraceEndMs = null
                         originalTimerDurationMs = null
-                        if (playing) { playing = false; playerBook?.hash?.let { syncPosition(it) } }
                     }
                 }
 
@@ -447,8 +471,9 @@ class MainActivity : AppCompatActivity() {
                             val magnitude = sqrt((x * x + y * y + z * z).toDouble()).toFloat()
                             if (magnitude >= 15f) {
                                 val dur = originalTimerDurationMs ?: return
-                                timerEndMs = System.currentTimeMillis() + dur
+                                timerEndMs = if (dur == -1L) -1L else System.currentTimeMillis() + dur
                                 timerGraceEndMs = null
+                                playing = true
                             }
                         }
                         override fun onAccuracyChanged(s: Sensor?, a: Int) {}
@@ -696,6 +721,7 @@ class MainActivity : AppCompatActivity() {
                     currentChapter = 0
                     sliderValue = 0f
                     chapterDurationMs = 0L
+                    chapterDurationsMs = emptyMap()
                     pendingSeekMs = null
                     playing = true
                     screen = targetScreen
@@ -969,13 +995,17 @@ class MainActivity : AppCompatActivity() {
                             playing = true
                         },
                         speedRaw = speedRaw,
-                        onSpeedRawChange = { speedRaw = it; playing = true },
+                        onSpeedRawChange = { speedRaw = it },
                         chapterDurationMs = chapterDurationMs,
+                        chapterDurationsMs = chapterDurationsMs,
                         timerEndMs = timerEndMs,
                         onTimerSet = { endMs ->
                             timerEndMs = endMs
-                            originalTimerDurationMs = if (endMs != null && endMs != -1L)
-                                endMs - System.currentTimeMillis() else null
+                            originalTimerDurationMs = when {
+                                endMs == null -> null
+                                endMs == -1L -> -1L
+                                else -> endMs - System.currentTimeMillis()
+                            }
                             timerGraceEndMs = null
                         },
                         onReplay30 = onReplay30,

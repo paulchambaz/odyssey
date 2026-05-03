@@ -47,6 +47,12 @@ import kotlinx.coroutines.delay
 import xyz.chambaz.odyssey.model.Audiobook
 import xyz.chambaz.odyssey.model.Chapter
 
+private fun formatHm(ms: Long): String {
+    val h = ms / 3_600_000
+    val m = (ms % 3_600_000) / 60_000
+    return if (h > 0) "${h}h${"%02d".format(m)}m" else "${m}m"
+}
+
 private fun formatMs(ms: Long): String {
     val h = ms / 3_600_000
     val m = (ms % 3_600_000) / 60_000
@@ -70,6 +76,7 @@ fun PlayerScreen(
     speedRaw: Float,
     onSpeedRawChange: (Float) -> Unit,
     chapterDurationMs: Long,
+    chapterDurationsMs: Map<Int, Long>,
     timerEndMs: Long?,
     onTimerSet: (Long?) -> Unit,
     onReplay30: () -> Unit,
@@ -96,6 +103,11 @@ fun PlayerScreen(
 
     val elapsedMs = (sliderValue * chapterDurationMs).toLong()
     val remainingMs = ((1f - sliderValue) * chapterDurationMs).toLong()
+    val bookRemainingMs: Long? = if (book.duration != null && chapterDurationMs > 0) {
+        val elapsedBeforeCurrentMs = (0 until currentChapter).sumOf { chapterDurationsMs[it] ?: 0L }
+        val totalElapsedMs = elapsedBeforeCurrentMs + elapsedMs
+        ((book.duration * 1000L - totalElapsedMs).coerceAtLeast(0L) / speedRaw).toLong()
+    } else null
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -216,6 +228,13 @@ fun PlayerScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (bookRemainingMs != null) {
+                        Text(
+                            "${formatHm(bookRemainingMs)} left",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Text(
                         if (chapterDurationMs > 0) "–${formatMs(remainingMs)}" else "--:--",
                         style = MaterialTheme.typography.bodySmall,
@@ -331,7 +350,10 @@ fun PlayerScreen(
     }
 
     if (showSpeed) {
+        var localSpeed by remember { mutableStateOf(speedRaw) }
+        val localSpeedDisplay = (localSpeed * 10).roundToInt() / 10f
         val presets = listOf(0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f)
+        val changeSpeed = { v: Float -> localSpeed = v; onSpeedRawChange(v) }
         ModalBottomSheet(
             onDismissRequest = { showSpeed = false },
             containerColor = MaterialTheme.colorScheme.surface,
@@ -347,7 +369,7 @@ fun PlayerScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("Speed", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                    Text("${speedDisplay}×", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                    Text("${localSpeedDisplay}×", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
                 }
                 Spacer(Modifier.height(16.dp))
                 Row(
@@ -355,14 +377,14 @@ fun PlayerScreen(
                 ) {
                     val buttonGray = lerp(MaterialTheme.colorScheme.outline, MaterialTheme.colorScheme.onSurfaceVariant, 0.5f)
                     OutlinedIconButton(
-                        onClick = { onSpeedRawChange((speedDisplay - 0.5f).coerceIn(0.5f, 3.5f)) },
+                        onClick = { changeSpeed((localSpeedDisplay - 0.5f).coerceIn(0.5f, 3.5f)) },
                         border = BorderStroke(1.dp, buttonGray),
                     ) {
                         Icon(Icons.Default.Remove, "-", tint = buttonGray)
                     }
                     Slider(
-                        value = speedRaw,
-                        onValueChange = { onSpeedRawChange(it) },
+                        value = localSpeed,
+                        onValueChange = { changeSpeed(it) },
                         valueRange = 0.5f..3.5f,
                         modifier = Modifier.weight(1f),
                         thumb = {
@@ -391,7 +413,7 @@ fun PlayerScreen(
                         },
                     )
                     OutlinedIconButton(
-                        onClick = { onSpeedRawChange((speedDisplay + 0.5f).coerceIn(0.5f, 3.5f)) },
+                        onClick = { changeSpeed((localSpeedDisplay + 0.5f).coerceIn(0.5f, 3.5f)) },
                         border = BorderStroke(1.dp, buttonGray),
                     ) {
                         Icon(Icons.Default.Add, "+", tint = buttonGray)
@@ -403,9 +425,9 @@ fun PlayerScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     presets.forEach { preset ->
-                        val selected = speedDisplay == preset
+                        val selected = localSpeedDisplay == preset
                         Surface(
-                            onClick = { onSpeedRawChange(preset) },
+                            onClick = { changeSpeed(preset) },
                             modifier = Modifier.weight(1f).height(32.dp),
                             shape = CircleShape,
                             color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
