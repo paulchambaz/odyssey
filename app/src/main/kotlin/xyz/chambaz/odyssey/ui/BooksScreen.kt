@@ -1,5 +1,6 @@
 package xyz.chambaz.odyssey.ui
 
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -19,12 +20,53 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import xyz.chambaz.odyssey.model.Audiobook
 import xyz.chambaz.odyssey.model.Position
+import java.io.File
+
+@Composable
+fun LazyBookCover(hash: String, bookDir: File) {
+    var bitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    LaunchedEffect(hash) {
+        bitmap = withContext(Dispatchers.IO) {
+            try {
+                val infoFile = File(bookDir, "info.yml")
+                val lines = infoFile.readLines()
+                val coverPath = lines.firstOrNull { it.startsWith("cover:") }
+                    ?.removePrefix("cover:")?.trim()?.trim('"')
+                    ?: return@withContext null
+                val coverFile = File(bookDir, coverPath)
+                BitmapFactory.decodeFile(coverFile.absolutePath)?.asImageBitmap()
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        bitmap?.let { bmp ->
+            Image(
+                bitmap = bmp,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
+    }
+}
 
 private fun progressCategory(progress: Float?): Int = when {
     progress == null || progress == 0f -> 1
@@ -45,9 +87,10 @@ private fun bookProgress(position: Position, chapterCount: Int, duration: Long):
 fun AudiobooksContent(
     books: List<Audiobook>,
     positions: Map<String, Position?>,
-    covers: Map<String, ImageBitmap?>,
     chapterCounts: Map<String, Int>,
     downloadTimestamps: Map<String, Long>,
+    store: xyz.chambaz.odyssey.store.Store,
+    filesDir: File,
     onNavigatePlayer: (Audiobook) -> Unit,
     onLongPress: (Audiobook) -> Unit,
 ) {
@@ -66,7 +109,6 @@ fun AudiobooksContent(
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(sorted, key = { it.hash }) { book ->
             val position = positions[book.hash]
-            val cover = covers[book.hash]
             val progress = position?.let {
                 val c = chapterCounts[book.hash] ?: 0
                 val d = book.duration ?: 0L
@@ -106,21 +148,7 @@ fun AudiobooksContent(
                     }
                 },
                 leadingContent = {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                    ) {
-                        if (cover != null) {
-                            Image(
-                                bitmap = cover,
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop,
-                            )
-                        }
-                    }
+                    LazyBookCover(book.hash, store.libraryDir(book.hash, filesDir))
                 },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.background),
                 modifier = Modifier.combinedClickable(
@@ -146,9 +174,10 @@ private fun fuzzyMatch(query: String, target: String): Boolean {
 fun AudiobooksSearchScreen(
     books: List<Audiobook>,
     positions: Map<String, Position?>,
-    covers: Map<String, ImageBitmap?>,
     chapterCounts: Map<String, Int>,
     downloadTimestamps: Map<String, Long>,
+    store: xyz.chambaz.odyssey.store.Store,
+    filesDir: File,
     onBack: () -> Unit,
     onNavigatePlayer: (Audiobook) -> Unit,
     onLongPress: (Audiobook) -> Unit,
@@ -207,7 +236,6 @@ fun AudiobooksSearchScreen(
         LazyColumn(contentPadding = padding) {
             items(results) { book ->
                 val position = positions[book.hash]
-                val cover = covers[book.hash]
                 val progress = position?.let {
                     val c = chapterCounts[book.hash] ?: 0
                     val d = book.duration ?: 0L
@@ -245,21 +273,7 @@ fun AudiobooksSearchScreen(
                         }
                     },
                     leadingContent = {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                        ) {
-                            if (cover != null) {
-                                Image(
-                                    bitmap = cover,
-                                    contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop,
-                                )
-                            }
-                        }
+                        LazyBookCover(book.hash, store.libraryDir(book.hash, filesDir))
                     },
                     colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.background),
                     modifier = Modifier.combinedClickable(

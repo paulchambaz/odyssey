@@ -157,6 +157,13 @@ class MainActivity : AppCompatActivity() {
                 var api by remember { mutableStateOf(initialCreds?.let { IliadApi(it) }) }
                 var mainPage by remember { mutableIntStateOf(0) }
                 var books by remember { mutableStateOf<List<Audiobook>>(emptyList()) }
+                var localAudiobooks by remember { mutableStateOf<List<Audiobook>>(emptyList()) }
+
+                LaunchedEffect(Unit) {
+                    localAudiobooks = withContext(Dispatchers.IO) {
+                        store.loadLocalAudiobooks(filesDir).map { it.second }
+                    }
+                }
                 var playerBook by remember { mutableStateOf<Audiobook?>(null) }
                 var playerChapters by remember { mutableStateOf<List<Chapter>>(emptyList()) }
                 var playing by remember { mutableStateOf(false) }
@@ -212,8 +219,11 @@ class MainActivity : AppCompatActivity() {
                     downloadStates = downloadStates + (hash to state)
                     store.saveDownloadState(hash, state)
                 }
-                val localBooks = remember(filteredBooks, downloadStates) {
-                    filteredBooks.filter { downloadStates[it.hash] == DownloadState.READY }
+                val localBooks = remember(localAudiobooks, books) {
+                    localAudiobooks.map { local ->
+                        val api = books.find { it.hash == local.hash }
+                        local.copy(duration = api?.duration)
+                    }
                 }
                 var positions by remember { mutableStateOf<Map<String, Position?>>(emptyMap()) }
                 LaunchedEffect(localBooks, screen) {
@@ -934,6 +944,8 @@ class MainActivity : AppCompatActivity() {
                         downloadTimestamps = downloadTimestamps,
                         downloadStates = downloadStates,
                         downloadProgress = downloadProgress,
+                        store = store,
+                        filesDir = filesDir,
                         onDownloadStateChange = { hash, state -> setDownloadState(hash, state) },
                         onDownload = { onDownload(it) },
                         onCancelDownload = { cancelCallbacks[it.hash]?.invoke() },
@@ -965,9 +977,10 @@ class MainActivity : AppCompatActivity() {
                     Screen.AudiobooksSearch -> AudiobooksSearchScreen(
                         books = localBooks,
                         positions = positions,
-                        covers = covers,
                         chapterCounts = chapterCounts,
                         downloadTimestamps = downloadTimestamps,
+                        store = store,
+                        filesDir = filesDir,
                         onBack = { screen = Screen.Main },
                         onNavigatePlayer = { navigateToPlayer(it) },
                         onLongPress = { book -> selectedBook = book.copy(description = descriptions[book.hash]) },

@@ -2,6 +2,7 @@ package xyz.chambaz.odyssey.store
 
 import android.content.Context
 import com.google.gson.Gson
+import xyz.chambaz.odyssey.model.Audiobook
 import xyz.chambaz.odyssey.model.Credentials
 import xyz.chambaz.odyssey.model.Position
 import java.io.File
@@ -110,4 +111,63 @@ class Store(private val prefs: Prefs) {
     }
 
     fun clearAll() = prefs.clear()
+
+    fun loadLocalAudiobooks(filesDir: File): List<Pair<String, Audiobook>> {
+        val loc = loadDownloadLocation()
+        val libBase = if (loc.isEmpty()) File(filesDir, "library") else File(loc)
+        if (!libBase.exists()) return emptyList()
+
+        return libBase.listFiles()?.mapNotNull { dir ->
+            if (!dir.isDirectory) return@mapNotNull null
+            val hash = dir.name
+            val infoFile = File(dir, "info.yml")
+            if (!infoFile.exists()) return@mapNotNull null
+
+            try {
+                val lines = infoFile.readLines()
+                val title = lines.firstOrNull { it.startsWith("title:") }
+                    ?.removePrefix("title:")?.trim()?.trim('"') ?: "Unknown"
+                val author = lines.firstOrNull { it.startsWith("author:") }
+                    ?.removePrefix("author:")?.trim()?.trim('"') ?: "Unknown"
+                val date = lines.firstOrNull { it.startsWith("date:") }
+                    ?.removePrefix("date:")?.trim()?.toIntOrNull()
+                val description = lines.firstOrNull { it.startsWith("description:") }
+                    ?.removePrefix("description:")?.trim()?.trim('"')
+                val genreLines = lines.dropWhile { !it.startsWith("genres:") }
+                    .drop(1).takeWhile { it.startsWith("  - ") }
+                val genres = genreLines.map { it.removePrefix("  - ").trim() }
+                val chapterLines = lines.dropWhile { !it.startsWith("chapters:") }
+                    .drop(1).takeWhile { it.startsWith("  - ") || it.startsWith("    ") }
+                val chapterCount = chapterLines.count { it.trim().startsWith("- title:") }
+                val coverPath = lines.firstOrNull { it.startsWith("cover:") }
+                    ?.removePrefix("cover:")?.trim()?.trim('"')
+                val coverBitmap = coverPath?.let {
+                    try {
+                        android.graphics.BitmapFactory.decodeFile(File(dir, it).absolutePath)
+                            ?.let { bmp -> android.util.Base64.encodeToString(
+                                android.graphics.Bitmap.createBitmap(bmp).let {
+                                    val stream = java.io.ByteArrayOutputStream()
+                                    it.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                                    stream.toByteArray()
+                                }, android.util.Base64.DEFAULT) }
+                    } catch (_: Exception) { null }
+                }
+
+                val audiobook = xyz.chambaz.odyssey.model.Audiobook(
+                    hash = hash,
+                    title = title,
+                    author = author,
+                    cover = coverBitmap,
+                    date = date,
+                    description = description,
+                    genres = if (genres.isNotEmpty()) genres else null,
+                    duration = null,
+                    archiveReady = false
+                )
+                hash to audiobook
+            } catch (_: Exception) {
+                null
+            }
+        } ?: emptyList()
+    }
 }

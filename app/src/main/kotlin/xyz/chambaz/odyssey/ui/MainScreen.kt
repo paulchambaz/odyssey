@@ -48,6 +48,8 @@ fun MainScreen(
     downloadTimestamps: Map<String, Long>,
     downloadStates: Map<String, DownloadState>,
     downloadProgress: Map<String, Float>,
+    store: xyz.chambaz.odyssey.store.Store,
+    filesDir: java.io.File,
     onDownloadStateChange: (String, DownloadState) -> Unit,
     onDownload: (Audiobook) -> Unit,
     onCancelDownload: (Audiobook) -> Unit,
@@ -190,9 +192,10 @@ fun MainScreen(
                 0 -> AudiobooksContent(
                     books = localBooks,
                     positions = positions,
-                    covers = covers,
                     chapterCounts = chapterCounts,
                     downloadTimestamps = downloadTimestamps,
+                    store = store,
+                    filesDir = filesDir,
                     onNavigatePlayer = onNavigatePlayer,
                     onLongPress = { onLocalBookSelected(it) },
                 )
