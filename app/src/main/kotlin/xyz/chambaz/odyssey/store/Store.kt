@@ -101,6 +101,9 @@ class Store(private val prefs: Prefs) {
     fun savePlaybackSpeed(speed: Float) = prefs.putString("playbackSpeed", speed.toString())
     fun loadPlaybackSpeed(): Float = prefs.getString("playbackSpeed")?.toFloatOrNull() ?: 1.0f
 
+    fun saveDuration(hash: String, duration: Long) = prefs.putString("dur_$hash", duration.toString())
+    fun loadDuration(hash: String): Long? = prefs.getString("dur_$hash")?.toLongOrNull()
+
     fun saveServerPosition(hash: String, position: Position) {
         prefs.putString("pos_server_$hash", gson.toJson(position))
     }

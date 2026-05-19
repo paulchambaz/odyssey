@@ -221,8 +221,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 val localBooks = remember(localAudiobooks, books) {
                     localAudiobooks.map { local ->
-                        val api = books.find { it.hash == local.hash }
-                        local.copy(duration = api?.duration)
+                        val remote = books.find { it.hash == local.hash }
+                        local.copy(duration = remote?.duration ?: store.loadDuration(local.hash))
                     }
                 }
                 var positions by remember { mutableStateOf<Map<String, Position?>>(emptyMap()) }
@@ -864,7 +864,11 @@ class MainActivity : AppCompatActivity() {
                             notificationManager.notify(notifId, notif.build())
                             extractTarGz(archiveFile, destDir)
                             archiveFile.delete()
+                            book.duration?.let { store.saveDuration(book.hash, it) }
                             setDownloadState(book.hash, DownloadState.READY)
+                            localAudiobooks = withContext(Dispatchers.IO) {
+                                store.loadLocalAudiobooks(filesDir).map { it.second }
+                            }
                             try {
                                 val pos = api!!.getPosition(book.hash)
                                 store.savePosition(book.hash, pos)
