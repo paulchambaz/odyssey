@@ -863,6 +863,9 @@ class MainActivity : AppCompatActivity() {
                     val bookDir = store.libraryDir(book.hash, filesDir)
                     bookDir.deleteRecursively()
                     File(bookDir.parentFile ?: File(filesDir, "library"), "${book.hash}.tar.gz").delete()
+                    val freshData = withContext(Dispatchers.IO) { store.loadLocalAudiobooks(filesDir) }
+                    localAudiobooks = freshData.map { it.second }
+                    chapterCounts = freshData.associate { it.first to it.third }
                 }
 
                 fun startDownload(book: Audiobook) {
@@ -927,16 +930,16 @@ class MainActivity : AppCompatActivity() {
                                 }.toMap()
                                 store.saveChapterDurations(book.hash, durs)
                             }
-                            setDownloadState(book.hash, DownloadState.READY)
-                            localAudiobooks = withContext(Dispatchers.IO) {
-                                store.loadLocalAudiobooks(filesDir).map { it.second }
-                            }
                             try {
                                 val pos = api!!.getPosition(book.hash)
                                 store.savePosition(book.hash, pos)
                                 store.saveServerPosition(book.hash, pos)
                                 positions = positions + (book.hash to pos)
                             } catch (_: Exception) {}
+                            setDownloadState(book.hash, DownloadState.READY)
+                            val freshData = withContext(Dispatchers.IO) { store.loadLocalAudiobooks(filesDir) }
+                            localAudiobooks = freshData.map { it.second }
+                            chapterCounts = chapterCounts + freshData.associate { it.first to it.third }
                             cancelCallbacks.remove(book.hash)
                             notificationManager.notify(notifId, NotificationCompat.Builder(context, NOTIF_CHANNEL_ID)
                                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
