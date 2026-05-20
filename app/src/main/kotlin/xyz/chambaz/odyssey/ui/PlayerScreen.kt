@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -78,6 +79,7 @@ fun PlayerScreen(
     chapterDurationMs: Long,
     chapterDurationsMs: Map<Int, Long>,
     timerEndMs: Long?,
+    originalTimerDurationMs: Long?,
     onTimerSet: (Long?) -> Unit,
     onReplay30: () -> Unit,
     onForward30: () -> Unit,
@@ -87,6 +89,7 @@ fun PlayerScreen(
 ) {
     BackHandler { onBack() }
     var showChapters by remember { mutableStateOf(false) }
+    val chapterListState = rememberLazyListState()
     var showSpeed by remember { mutableStateOf(false) }
     var showTimer by remember { mutableStateOf(false) }
     var showTrackDetail by remember { mutableStateOf(false) }
@@ -95,6 +98,7 @@ fun PlayerScreen(
 
     var currentTimeMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(timerEndMs) {
+        if (timerEndMs != null && timerEndMs != -1L) currentTimeMs = System.currentTimeMillis()
         while (timerEndMs != null && timerEndMs != -1L && timerEndMs!! > System.currentTimeMillis()) {
             delay(1_000)
             currentTimeMs = System.currentTimeMillis()
@@ -329,7 +333,10 @@ fun PlayerScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
-                LazyColumn {
+                LaunchedEffect(showChapters) {
+                    if (showChapters) chapterListState.animateScrollToItem(currentChapter)
+                }
+                LazyColumn(state = chapterListState) {
                     itemsIndexed(chapters) { index, chapter ->
                         ListItem(
                             headlineContent = {
@@ -449,12 +456,12 @@ fun PlayerScreen(
     }
 
     if (showTimer) {
-        val options = listOf("Off", "5 min", "10 min", "15 min", "30 min", "45 min", "60 min", "End of chapter")
-        val minutesMap = mapOf("5 min" to 5L, "10 min" to 10L, "15 min" to 15L, "30 min" to 30L, "45 min" to 45L, "60 min" to 60L)
+        val options = listOf("Off", "1 min", "5 min", "10 min", "15 min", "30 min", "45 min", "60 min", "End of chapter")
+        val minutesMap = mapOf("1 min" to 1L, "5 min" to 5L, "10 min" to 10L, "15 min" to 15L, "30 min" to 30L, "45 min" to 45L, "60 min" to 60L)
         val currentLabel = when {
             timerEndMs == null -> "Off"
             timerEndMs == -1L -> "End of chapter"
-            else -> options.firstOrNull { minutesMap[it] != null && timerEndMs == System.currentTimeMillis() + minutesMap[it]!! * 60_000 } ?: "Off"
+            else -> options.firstOrNull { minutesMap[it] != null && minutesMap[it]!! * 60_000L == originalTimerDurationMs } ?: "Off"
         }
         ModalBottomSheet(
             onDismissRequest = { showTimer = false },

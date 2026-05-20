@@ -33,9 +33,6 @@ fun SettingsScreen(
     onVolumeNormalizationChange: (Boolean) -> Unit = {},
     downloadLocation: String = "",
     onPickDownloadLocation: () -> Unit = {},
-    pairedBtDevices: List<Pair<String, String>> = emptyList(),
-    carDevices: Set<String> = emptySet(),
-    onCarDeviceToggle: (String, Boolean) -> Unit = { _, _ -> },
 ) {
     BackHandler { onBack() }
     var showLogoutDialog by remember { mutableStateOf(false) }
@@ -218,32 +215,6 @@ fun SettingsScreen(
                     checked = autoCarMode,
                     onCheckedChange = { autoCarMode = it; store.saveAutoCarMode(it) },
                 )
-            }
-
-            if (autoCarMode) {
-                Spacer(Modifier.height(12.dp))
-                Text("Car Bluetooth devices", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                if (pairedBtDevices.isEmpty()) {
-                    Text("No paired devices found", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                } else {
-                    pairedBtDevices.forEach { (name, address) ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground)
-                                Text(address, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                            }
-                            Switch(
-                                checked = address in carDevices,
-                                onCheckedChange = { onCarDeviceToggle(address, it) },
-                            )
-                        }
-                    }
-                }
             }
 
             Spacer(Modifier.height(24.dp))

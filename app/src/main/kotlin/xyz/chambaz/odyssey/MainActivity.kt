@@ -11,6 +11,7 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.media.PlaybackParams
 import android.media.audiofx.LoudnessEnhancer
@@ -158,11 +159,12 @@ class MainActivity : AppCompatActivity() {
                 var mainPage by remember { mutableIntStateOf(0) }
                 var books by remember { mutableStateOf<List<Audiobook>>(emptyList()) }
                 var localAudiobooks by remember { mutableStateOf<List<Audiobook>>(emptyList()) }
+                var chapterCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
 
                 LaunchedEffect(Unit) {
-                    localAudiobooks = withContext(Dispatchers.IO) {
-                        store.loadLocalAudiobooks(filesDir).map { it.second }
-                    }
+                    val data = withContext(Dispatchers.IO) { store.loadLocalAudiobooks(filesDir) }
+                    localAudiobooks = data.map { it.second }
+                    chapterCounts = data.associate { it.first to it.third }
                 }
                 var playerBook by remember { mutableStateOf<Audiobook?>(null) }
                 var playerChapters by remember { mutableStateOf<List<Chapter>>(emptyList()) }
@@ -176,13 +178,13 @@ class MainActivity : AppCompatActivity() {
                 var timerEndMs by remember { mutableStateOf<Long?>(null) }
                 var originalTimerDurationMs by remember { mutableStateOf<Long?>(null) }
                 var timerGraceEndMs by remember { mutableStateOf<Long?>(null) }
+                var timerFiredPause by remember { mutableStateOf(false) }
                 var positionConflict by remember { mutableStateOf<Triple<String, Position, Position>?>(null) }
                 var volumeNormEnabled by remember { mutableStateOf(store.loadVolumeNormalization()) }
                 val loudnessEnhancer = remember { mutableStateOf<LoudnessEnhancer?>(null) }
                 var isRefreshing by remember { mutableStateOf(false) }
                 var connectedBtDevices by remember { mutableStateOf<Set<String>>(emptySet()) }
-                var carDevices by remember { mutableStateOf(store.loadCarDevices()) }
-                var pairedBtDevices by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+
                 val bookMinYear = remember(books) { (books.mapNotNull { it.date }.minOrNull()?.minus(1) ?: 1900).toFloat() }
                 val bookMaxYear = remember(books) { (books.mapNotNull { it.date }.maxOrNull()?.plus(1) ?: 2030).toFloat() }
                 val bookMinDuration = remember(books) { maxOf(0f, (books.mapNotNull { it.duration }.minOrNull()?.div(3_600f) ?: 0f) - 1f) }
@@ -236,29 +238,21 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 var covers by remember { mutableStateOf<Map<String, ImageBitmap?>>(emptyMap()) }
-                var chapterCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
                 var downloadTimestamps by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
                 var descriptions by remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
-                LaunchedEffect(localBooks) {
-                    data class BookAssets(val hash: String, val cover: ImageBitmap?, val chapterCount: Int, val downloadTime: Long, val description: String?)
+                LaunchedEffect(localAudiobooks) {
                     val loaded = withContext(Dispatchers.IO) {
-                        localBooks.map { book ->
-                            val bookDir = store.libraryDir(book.hash, filesDir)
-                            val infoFile = File(bookDir, "info.yml")
-                            val lines = if (infoFile.exists()) infoFile.readLines() else emptyList()
-                            val bitmap = lines.firstOrNull { it.startsWith("cover:") }
-                                ?.removePrefix("cover:")?.trim()?.trim('"')
-                                ?.let { BitmapFactory.decodeFile(File(bookDir, it).absolutePath)?.asImageBitmap() }
-                            val count = lines.count { it.trim().startsWith("- title:") }
-                            val desc = lines.firstOrNull { it.startsWith("description:") }
-                                ?.removePrefix("description:")?.trim()?.trim('"')
-                            BookAssets(book.hash, bitmap, count, bookDir.lastModified(), desc)
+                        localAudiobooks.map { book ->
+                            val bitmap = book.cover
+                                ?.let { android.util.Base64.decode(it, android.util.Base64.DEFAULT) }
+                                ?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+                            val downloadTime = store.libraryDir(book.hash, filesDir).lastModified()
+                            Triple(book.hash, bitmap, downloadTime)
                         }
                     }
-                    covers = loaded.associate { it.hash to it.cover }
-                    chapterCounts = loaded.associate { it.hash to it.chapterCount }
-                    downloadTimestamps = loaded.associate { it.hash to it.downloadTime }
-                    descriptions = loaded.associate { it.hash to it.description }
+                    covers = loaded.associate { it.first to it.second }
+                    downloadTimestamps = loaded.associate { it.first to it.third }
+                    descriptions = localAudiobooks.associate { it.hash to it.description }
                 }
                 var downloadProgress by remember { mutableStateOf<Map<String, Float>>(emptyMap()) }
                 var selectedBook by remember { mutableStateOf<Audiobook?>(null) }
@@ -362,8 +356,16 @@ class MainActivity : AppCompatActivity() {
                                 currentChapter++
                                 pendingSeekMs = 0L
                                 playing = false
-                                if (store.loadShakeToExtend()) {
-                                    timerGraceEndMs = System.currentTimeMillis() + 60_000L
+                                if (store.loadShakeToExtend() && originalTimerDurationMs != null) {
+                                    timerGraceEndMs = System.currentTimeMillis() + 70_000L
+                                    scope.launch {
+                                        for (step in 9 downTo 0) {
+                                            mediaPlayer.setVolume(step / 10f, step / 10f)
+                                            delay(1_000)
+                                            if (timerGraceEndMs == null) { mediaPlayer.setVolume(1f, 1f); return@launch }
+                                        }
+                                        mediaPlayer.setVolume(1f, 1f)
+                                    }
                                 } else {
                                     originalTimerDurationMs = null
                                 }
@@ -400,6 +402,15 @@ class MainActivity : AppCompatActivity() {
                         if (mediaPlayer.isPlaying) {
                             mediaPlayer.pause()
                             playerBook?.hash?.let { h -> scope.launch { syncPosition(h) } }
+                        }
+                        if (timerFiredPause) {
+                            timerFiredPause = false
+                        } else {
+                            // Manual pause — cancel timer and grace window completely
+                            timerEndMs = null
+                            timerGraceEndMs = null
+                            originalTimerDurationMs = null
+                            mediaPlayer.setVolume(1f, 1f)
                         }
                     }
                 }
@@ -450,14 +461,42 @@ class MainActivity : AppCompatActivity() {
                     val end = timerEndMs ?: return@LaunchedEffect
                     if (end == -1L) return@LaunchedEffect  // "End of chapter" handled in completion listener
                     val remaining = end - System.currentTimeMillis()
-                    if (remaining > 0) delay(remaining)
-                    timerEndMs = null
-                    if (playing) { playing = false; playerBook?.hash?.let { syncPosition(it) } }
-                    if (store.loadShakeToExtend() && originalTimerDurationMs != null) {
-                        timerGraceEndMs = System.currentTimeMillis() + 60_000L
-                    } else {
-                        originalTimerDurationMs = null
+                    // Wait until 10s before timer end, then fade; pause lands exactly at end
+                    val fadeStartIn = (remaining - 10_000).coerceAtLeast(0L)
+                    if (fadeStartIn > 0) delay(fadeStartIn)
+                    if (!playing) {
+                        timerEndMs = null
+                        if (store.loadShakeToExtend() && originalTimerDurationMs != null) {
+                            timerGraceEndMs = System.currentTimeMillis() + 60_000L
+                        } else {
+                            originalTimerDurationMs = null
+                        }
+                        return@LaunchedEffect
                     }
+                    val shakeEnabled = store.loadShakeToExtend() && originalTimerDurationMs != null
+                    // Open shake window now (covers 10s fade + 60s silent = 70s total)
+                    if (shakeEnabled) timerGraceEndMs = System.currentTimeMillis() + 70_000L
+                    for (step in 9 downTo 0) {
+                        mediaPlayer.setVolume(step / 10f, step / 10f)
+                        delay(1_000)
+                        if (!playing) {
+                            // Manual pause during fade — clean up and abort
+                            mediaPlayer.setVolume(1f, 1f)
+                            return@LaunchedEffect
+                        }
+                        if (shakeEnabled && timerGraceEndMs == null) {
+                            // Shake restarted timer — restore volume and let new LaunchedEffect take over
+                            mediaPlayer.setVolume(1f, 1f)
+                            return@LaunchedEffect
+                        }
+                    }
+                    // All delays done — safe to mutate key now without cancellation risk
+                    timerEndMs = null
+                    timerFiredPause = true  // Tell LaunchedEffect(playing) this pause was timer-triggered
+                    playing = false
+                    playerBook?.hash?.let { h -> scope.launch { syncPosition(h) } }
+                    mediaPlayer.setVolume(1f, 1f)
+                    if (!shakeEnabled) originalTimerDurationMs = null
                 }
 
                 // Grace window: 60s to shake; if no shake, stay paused
@@ -481,6 +520,7 @@ class MainActivity : AppCompatActivity() {
                             val magnitude = sqrt((x * x + y * y + z * z).toDouble()).toFloat()
                             if (magnitude >= 15f) {
                                 val dur = originalTimerDurationMs ?: return
+                                mediaPlayer.setVolume(1f, 1f)
                                 timerEndMs = if (dur == -1L) -1L else System.currentTimeMillis() + dur
                                 timerGraceEndMs = null
                                 playing = true
@@ -500,7 +540,7 @@ class MainActivity : AppCompatActivity() {
                         ?: return@DisposableEffect onDispose {}
                     btAdapter.getProfileProxy(context, object : BluetoothProfile.ServiceListener {
                         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
-                            connectedBtDevices = proxy.connectedDevices.map { it.address }.toSet()
+                            connectedBtDevices = proxy.connectedDevices.mapNotNull { it.name?.takeIf(String::isNotEmpty) }.toSet()
                             btAdapter.closeProfileProxy(profile, proxy)
                         }
                         override fun onServiceDisconnected(profile: Int) {}
@@ -510,10 +550,10 @@ class MainActivity : AppCompatActivity() {
                             val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                                 intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
                             else @Suppress("DEPRECATION") intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-                            val addr = device?.address ?: return
+                            val name = device?.name?.takeIf(String::isNotEmpty) ?: return
                             connectedBtDevices = when (intent.action) {
-                                BluetoothDevice.ACTION_ACL_CONNECTED -> connectedBtDevices + addr
-                                BluetoothDevice.ACTION_ACL_DISCONNECTED -> connectedBtDevices - addr
+                                BluetoothDevice.ACTION_ACL_CONNECTED -> connectedBtDevices + name
+                                BluetoothDevice.ACTION_ACL_DISCONNECTED -> connectedBtDevices - name
                                 else -> connectedBtDevices
                             }
                         }
@@ -524,14 +564,6 @@ class MainActivity : AppCompatActivity() {
                     }
                     ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
                     onDispose { context.unregisterReceiver(receiver) }
-                }
-
-                LaunchedEffect(Unit) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                        ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                        val btAdapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-                        pairedBtDevices = btAdapter?.bondedDevices?.map { it.name to it.address } ?: emptyList()
-                    }
                 }
 
                 // Background sync
@@ -721,7 +753,8 @@ class MainActivity : AppCompatActivity() {
                 // ── Navigation helpers ────────────────────────────────────────────────
 
                 fun navigateToPlayer(book: Audiobook) {
-                    val targetScreen = if (store.loadAutoCarMode() && carDevices.any { it in connectedBtDevices }) Screen.CarMode else Screen.Player
+                    val carKeywords = listOf("pioneer","kenwood","alpine","jvc","clarion","sony","blaupunkt","harman","jensen","boss","rockford","car","auto","stereo","radio","head unit","handsfree","hands-free")
+                    val targetScreen = if (store.loadAutoCarMode() && connectedBtDevices.any { n -> carKeywords.any { k -> n.lowercase().contains(k) } }) Screen.CarMode else Screen.Player
                     if (playing && playerBook?.hash == book.hash) {
                         screen = targetScreen
                         return
@@ -733,32 +766,42 @@ class MainActivity : AppCompatActivity() {
                     chapterDurationMs = 0L
                     chapterDurationsMs = emptyMap()
                     pendingSeekMs = null
-                    playing = true
+                    playing = false
                     screen = targetScreen
                     scope.launch {
-                        val chapters = withContext(Dispatchers.IO) {
-                            val f = File(store.libraryDir(book.hash, filesDir), "info.yml")
-                            if (f.exists()) parseInfoYml(f) else emptyList()
+                        val (chapters, initialDurations) = withContext(Dispatchers.IO) {
+                            val bookDir = store.libraryDir(book.hash, filesDir)
+                            val chs = File(bookDir, "info.yml").let { if (it.exists()) parseInfoYml(it) else emptyList() }
+                            chs to store.loadChapterDurations(book.hash)
                         }
                         val clamp = { idx: Int -> idx.coerceIn(0, (chapters.size - 1).coerceAtLeast(0)) }
+                        val rewindMs = store.loadRewindOnResume() * 1000L
+                        val localPos = store.loadPosition(book.hash)
 
-                        // Resolve position before setting playerChapters so chapter setup fires once
+                        // Phase A: show UI immediately with local data; MediaPlayer prepares but does not start
+                        currentChapter = clamp(localPos?.chapterIndex ?: 0)
+                        pendingSeekMs = ((localPos?.chapterPosition ?: 0L) - rewindMs).coerceAtLeast(0L)
+                        chapterDurationsMs = initialDurations
+                        playerChapters = chapters
+
+                        // Phase B: network resolves final position, then start playback
                         try {
                             val serverPos = api!!.getPosition(book.hash)
-                            val localPos = store.loadPosition(book.hash)
                             val lastServerPos = store.loadServerPosition(book.hash)
                             val serverTs = serverPos.clientTimestamp ?: 0L
                             val localTs = localPos?.clientTimestamp ?: 0L
                             val lastServerTs = lastServerPos?.clientTimestamp ?: -1L
                             Log.d("Odyssey/Merge", "S=$serverTs L=$localTs LS=$lastServerTs | server=(ch${serverPos.chapterIndex},${serverPos.chapterPosition}ms) local=(ch${localPos?.chapterIndex},${localPos?.chapterPosition}ms) lastServer=(ch${lastServerPos?.chapterIndex},${lastServerPos?.chapterPosition}ms)")
+                            var resolvedChapter = clamp(serverPos.chapterIndex)
+                            var resolvedSeekMs = serverPos.chapterPosition
                             val nearlyIdentical = localPos != null &&
                                 serverPos.chapterIndex == localPos.chapterIndex &&
                                 kotlin.math.abs(serverPos.chapterPosition - localPos.chapterPosition) < 30_000L
                             if (nearlyIdentical) {
                                 val earlier = if (serverPos.chapterPosition <= localPos!!.chapterPosition) serverPos else localPos
                                 val toSync = earlier.copy(clientTimestamp = System.currentTimeMillis() / 1000L)
-                                currentChapter = clamp(earlier.chapterIndex)
-                                pendingSeekMs = earlier.chapterPosition
+                                resolvedChapter = clamp(earlier.chapterIndex)
+                                resolvedSeekMs = earlier.chapterPosition
                                 store.savePosition(book.hash, toSync)
                                 try {
                                     api!!.putPosition(book.hash, toSync)
@@ -766,45 +809,47 @@ class MainActivity : AppCompatActivity() {
                                 } catch (_: Exception) { store.saveServerPosition(book.hash, serverPos) }
                             } else when {
                                 serverTs == lastServerTs && localTs > serverTs -> {
-                                    currentChapter = clamp(localPos!!.chapterIndex)
-                                    pendingSeekMs = localPos.chapterPosition
+                                    resolvedChapter = clamp(localPos!!.chapterIndex)
+                                    resolvedSeekMs = localPos.chapterPosition
                                     try {
                                         api!!.putPosition(book.hash, localPos)
                                         store.saveServerPosition(book.hash, localPos)
                                     } catch (_: Exception) {}
                                 }
                                 serverTs > localTs -> {
-                                    currentChapter = clamp(serverPos.chapterIndex)
-                                    pendingSeekMs = serverPos.chapterPosition
+                                    resolvedChapter = clamp(serverPos.chapterIndex)
+                                    resolvedSeekMs = serverPos.chapterPosition
                                     store.savePosition(book.hash, serverPos)
                                     store.saveServerPosition(book.hash, serverPos)
                                 }
                                 localTs > serverTs -> {
                                     store.saveServerPosition(book.hash, serverPos)
-                                    currentChapter = clamp(localPos!!.chapterIndex)
-                                    pendingSeekMs = localPos.chapterPosition
+                                    resolvedChapter = clamp(localPos!!.chapterIndex)
+                                    resolvedSeekMs = localPos.chapterPosition
                                     positionConflict = Triple(book.hash, serverPos, localPos)
                                 }
                                 else -> {
-                                    currentChapter = clamp(serverPos.chapterIndex)
-                                    pendingSeekMs = serverPos.chapterPosition
+                                    resolvedChapter = clamp(serverPos.chapterIndex)
+                                    resolvedSeekMs = serverPos.chapterPosition
                                     store.savePosition(book.hash, serverPos)
                                     store.saveServerPosition(book.hash, serverPos)
                                 }
                             }
-                        } catch (_: Exception) {
-                            val cached = store.loadPosition(book.hash)
-                            if (cached != null) {
-                                currentChapter = clamp(cached.chapterIndex)
-                                pendingSeekMs = cached.chapterPosition
+                            val resolvedRewindedMs = (resolvedSeekMs - rewindMs).coerceAtLeast(0L)
+                            if (resolvedChapter != currentChapter) {
+                                playing = true
+                                pendingSeekMs = resolvedRewindedMs
+                                currentChapter = resolvedChapter
+                            } else {
+                                mediaPlayer.seekTo(resolvedRewindedMs.toInt())
+                                sliderValue = if (chapterDurationMs > 0) resolvedRewindedMs.toFloat() / chapterDurationMs else 0f
+                                playing = true
+                                mediaPlayer.start()
                             }
+                        } catch (_: Exception) {
+                            playing = true
+                            mediaPlayer.start()
                         }
-
-                        val rewindMs = store.loadRewindOnResume() * 1000L
-                        pendingSeekMs = pendingSeekMs?.let { (it - rewindMs).coerceAtLeast(0L) }
-
-                        // Set chapters last: chapter setup fires once with correct position already set
-                        playerChapters = chapters
                     }
                 }
 
@@ -865,6 +910,23 @@ class MainActivity : AppCompatActivity() {
                             extractTarGz(archiveFile, destDir)
                             archiveFile.delete()
                             book.duration?.let { store.saveDuration(book.hash, it) }
+                            val infoFile = File(destDir, "info.yml")
+                            if (infoFile.exists()) {
+                                val chs = parseInfoYml(infoFile)
+                                val durs = chs.mapIndexedNotNull { index, chapter ->
+                                    val file = File(destDir, chapter.path)
+                                    if (!file.exists()) return@mapIndexedNotNull null
+                                    MediaMetadataRetriever().use { retriever ->
+                                        runCatching {
+                                            retriever.setDataSource(file.absolutePath)
+                                            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                                                ?.toLong()
+                                                ?.let { d -> index to d }
+                                        }.getOrNull()
+                                    }
+                                }.toMap()
+                                store.saveChapterDurations(book.hash, durs)
+                            }
                             setDownloadState(book.hash, DownloadState.READY)
                             localAudiobooks = withContext(Dispatchers.IO) {
                                 store.loadLocalAudiobooks(filesDir).map { it.second }
@@ -1016,6 +1078,7 @@ class MainActivity : AppCompatActivity() {
                         chapterDurationMs = chapterDurationMs,
                         chapterDurationsMs = chapterDurationsMs,
                         timerEndMs = timerEndMs,
+                        originalTimerDurationMs = originalTimerDurationMs,
                         onTimerSet = { endMs ->
                             timerEndMs = endMs
                             originalTimerDurationMs = when {
@@ -1066,13 +1129,7 @@ class MainActivity : AppCompatActivity() {
                         onThemeChange = { theme = it },
                         onAccentChange = { accentIndex = it },
                         onVolumeNormalizationChange = { volumeNormEnabled = it },
-                        pairedBtDevices = pairedBtDevices,
-                        carDevices = carDevices,
-                        onCarDeviceToggle = { address, enabled ->
-                            val updated = if (enabled) carDevices + address else carDevices - address
-                            carDevices = updated
-                            store.saveCarDevices(updated)
-                        },
+
                     )
                 }
 

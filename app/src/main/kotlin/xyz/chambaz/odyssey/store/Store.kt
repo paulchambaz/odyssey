@@ -92,17 +92,23 @@ class Store(private val prefs: Prefs) {
     fun saveAutoCarMode(enabled: Boolean) = prefs.putString("autoCarMode", enabled.toString())
     fun loadAutoCarMode(): Boolean = prefs.getString("autoCarMode")?.toBoolean() ?: false
 
-    fun saveCarDevices(addresses: Set<String>) = prefs.putString("carDevices", addresses.joinToString(","))
-    fun loadCarDevices(): Set<String> {
-        val s = prefs.getString("carDevices") ?: return emptySet()
-        return if (s.isEmpty()) emptySet() else s.split(",").toSet()
-    }
-
     fun savePlaybackSpeed(speed: Float) = prefs.putString("playbackSpeed", speed.toString())
     fun loadPlaybackSpeed(): Float = prefs.getString("playbackSpeed")?.toFloatOrNull() ?: 1.0f
 
     fun saveDuration(hash: String, duration: Long) = prefs.putString("dur_$hash", duration.toString())
     fun loadDuration(hash: String): Long? = prefs.getString("dur_$hash")?.toLongOrNull()
+
+    fun saveChapterDurations(hash: String, durations: Map<Int, Long>) =
+        prefs.putString("chapterDurs_$hash", durations.entries.joinToString(",") { "${it.key}:${it.value}" })
+
+    fun loadChapterDurations(hash: String): Map<Int, Long> =
+        prefs.getString("chapterDurs_$hash")
+            ?.split(",")
+            ?.mapNotNull { entry ->
+                val parts = entry.split(":")
+                if (parts.size == 2) parts[0].toIntOrNull()?.let { k -> parts[1].toLongOrNull()?.let { v -> k to v } } else null
+            }
+            ?.toMap() ?: emptyMap()
 
     fun saveServerPosition(hash: String, position: Position) {
         prefs.putString("pos_server_$hash", gson.toJson(position))
@@ -115,7 +121,7 @@ class Store(private val prefs: Prefs) {
 
     fun clearAll() = prefs.clear()
 
-    fun loadLocalAudiobooks(filesDir: File): List<Pair<String, Audiobook>> {
+    fun loadLocalAudiobooks(filesDir: File): List<Triple<String, Audiobook, Int>> {
         val loc = loadDownloadLocation()
         val libBase = if (loc.isEmpty()) File(filesDir, "library") else File(loc)
         if (!libBase.exists()) return emptyList()
@@ -167,7 +173,7 @@ class Store(private val prefs: Prefs) {
                     duration = null,
                     archiveReady = false
                 )
-                hash to audiobook
+                Triple(hash, audiobook, chapterCount)
             } catch (_: Exception) {
                 null
             }
