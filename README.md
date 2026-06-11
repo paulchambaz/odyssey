@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" width="100" />
+</p>
+
 <h1 align="center">odyssey</h1>
 <p align="center">An Android audiobook player for <a href="https://github.com/paulchambaz/iliad">Iliad</a>.</p>
 
