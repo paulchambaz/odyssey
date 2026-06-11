@@ -47,35 +47,9 @@ connect:
 test:
     ./gradlew testDebugUnitTest ${AAPT2:+-Pandroid.aapt2FromMavenOverride=$AAPT2}
 
-# Capture screenshots of all main screens into screenshots/
-screenshot:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p screenshots
-    dev=$(adb-device)
-    w=$(adb -s $dev shell wm size | grep -oP '\d+x\d+' | tail -1 | cut -dx -f1)
-    h=$(adb -s $dev shell wm size | grep -oP '\d+x\d+' | tail -1 | cut -dx -f2)
-    nav_y=$(( h - h / 16 ))          # bottom nav centre (~94% down)
-    nav_lib=$(( w / 6 ))              # Library tab
-    nav_books=$(( w / 2 ))            # Books tab
-    nav_settings=$(( w * 5 / 6 ))    # Settings tab
-    first_book_y=$(( h / 7 ))         # first list item (~14% down, below top bar)
-    adb -s $dev shell am start -n xyz.chambaz.odyssey/.MainActivity
-    sleep 2
-    adb -s $dev exec-out screencap -p > screenshots/1_library.png
-    adb -s $dev shell input tap $nav_books $nav_y
-    sleep 2
-    adb -s $dev exec-out screencap -p > screenshots/2_books.png
-    adb -s $dev shell input tap $nav_settings $nav_y
-    sleep 2
-    adb -s $dev exec-out screencap -p > screenshots/3_settings.png
-    adb -s $dev shell input tap $nav_lib $nav_y
-    sleep 2
-    adb -s $dev shell input tap $(( w / 2 )) $first_book_y
-    sleep 2
-    adb -s $dev exec-out screencap -p > screenshots/4_player.png
-    adb -s $dev shell input keyevent KEYCODE_BACK
-    echo "Saved screenshots/1_library.png … 4_player.png"
+# Capture a screenshot directly from device
+screenshot dest:
+    adb -s $(adb-device) exec-out screencap -p > {{dest}}
 
 # Bump version across all files (versionCode derived from semver)
 bump version:
