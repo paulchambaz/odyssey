@@ -20,6 +20,8 @@ local.properties
 # Claude
 CLAUDE.md
 ROADMAP.md
+ROADMAP-IOS.md
+CLIENTS.md
 .claude/
 
 # Local config
